@@ -47,16 +47,4 @@ public class Predecessor {
 
     }
 
-    public static void main(String[] args) {
-        int[] currentCoords = new int[] { 1, 2, 3 };
-        ArrayList<int[]> pred = Predecessor.getPredecessors(currentCoords, -1);
-        if (pred.isEmpty())
-            System.out.println("empty");
-        int c = 0;
-        for (int[] p : pred) {
-            c++;
-            System.out.println(Arrays.toString(p) + " " + c);
-        }
-    }
-
 }

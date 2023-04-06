@@ -141,7 +141,9 @@ public class MsmMean {
         int startS = 0;
         int startL = 1;
 
-        int initL = (Math.max(1, this.minDimension) - 1);
+     //   int initL = (Math.max(1, this.minDimension) - 1);
+        int initL = 0;
+
 
         for (int s = 0; s < this.distinctTsValues.length; s++) {
 
@@ -359,7 +361,7 @@ public class MsmMean {
 
                 ArrayList<int[]> predecessorList = Predecessor.getPredecessors(currentCoord, this.diag);
 
-                for (int l = Math.max(minCoord - 1, 0); l < Math.min(lLengths,
+                for (int l = 0; l < Math.min(lLengths,
                         this.loopMultiplier * (maxCoord) + 1); l++) {
 
                     double[] secondDimTableCurrentCoord = table.getSecondDim(firstDimTableCurrentCoord, l);
@@ -544,7 +546,7 @@ public class MsmMean {
 
     public static void main(String[] args) {
 
-        int n = 10;
+      int n = 10;
 
         double[][] exp1 = new double[3][n];
 
@@ -565,6 +567,9 @@ public class MsmMean {
         System.out.println("Mean");
         System.out.println(Arrays.toString(mean.getFirst()));
         System.out.println(mean.getSecond());
+
+        
+
 
     }
 

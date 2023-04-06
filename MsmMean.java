@@ -147,8 +147,6 @@ public class MsmMean {
 
         for (int s = 0; s < this.distinctTsValues.length; s++) {
 
-            // The mean has to be as least as long as the shortest time series-1
-
             int flattenMaxCoords = table.flattenCoordinate(maxCoordsTS);
             for (int l = initL; l < lLengths; l++) {
                 double tmp = table.get(flattenMaxCoords, l, s);

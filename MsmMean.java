@@ -4,7 +4,7 @@ import java.util.TreeSet;
 
 public class MsmMean {
 
-    // MultiDimArray for storing all Coordinates of a table with their respective
+    // MultiDimArray for storing all coordinates of a table with their respective
     // cost
     protected final MultiDimArray table;
 
@@ -35,10 +35,18 @@ public class MsmMean {
 
     int loopMultiplier;
 
-    int diag = -1;
+    // Parameter for the window heuristic, if set to -1, no window
+    int window = -1;
 
+    // Cost for Merge and Split Operation
     double c;
 
+    /**
+     * MSM Mean computation
+     *
+     * @param timeseries input time series
+     * @param c          constant cost for merge and split
+     */
     public MsmMean(double[][] timeseries, double c) {
         this.c = c;
         this.timeseries = timeseries;
@@ -49,7 +57,7 @@ public class MsmMean {
             this.minDimension = Math.min(minDimension, ts.length);
         }
 
-        // create list of all time series data points
+        // create list of all time series data points (V(X))
         TreeSet<Double> values = new TreeSet<Double>();
         for (var ts : this.timeseries) {
             for (double v : ts) {
@@ -63,9 +71,6 @@ public class MsmMean {
             this.distinctTsValues[i++] = v;
 
         // compute max coords = last coordinate of each time series
-        // maxDimCoords has one entry more, this is the size of the axis for all y
-        // values
-
         this.maxCoordsTS = new int[timeseries.length];
 
         for (int j = 0; j < timeseries.length; j++) {
@@ -74,16 +79,17 @@ public class MsmMean {
 
         this.loopMultiplier = k;
 
-        // length of mean
+        //max length of mean
         this.lLengths = k * (maxDimension - 1) + 1;
 
+        // number of distinct values in timeseries
         this.sLengths = this.distinctTsValues.length;
 
         this.table = new MultiDimArray(this.maxCoordsTS, this.lLengths, this.sLengths);
 
         // Create array for distinct values appearance
         this.appDist = new int[this.distinctTsValues.length][k];
-
+        // Filling array -> first appearances = position of a value of V(X) for each time series
         for (int t = 0; t < k; t++) {
             double[] ts = this.timeseries[t];
             for (int d = 0; d < this.distinctTsValues.length; d++) {
@@ -122,26 +128,34 @@ public class MsmMean {
 
     }
 
-    // alternative constructor for diagonal calc
-
-    public MsmMean(double[][] timeseries, double c, int diagParam) {
+    /**
+     * alternative constructor for window heuristic
+     *
+     * @param timeseries  input time series
+     * @param c           constant cost for merge and split
+     * @param windowParam window size
+     */
+    public MsmMean(double[][] timeseries, double c, int windowParam) {
         this(timeseries, c);
-        this.diag = diagParam;
+        this.window = windowParam;
     }
 
+    /**
+     * Compute mean
+     *
+     * @return mean and cost
+     */
     public Pair<double[], Double> calcMean() {
 
+        // fill multidimensional table
         calculateTableEntry();
 
-        // Start Coord for backtracking is the Table Entry with max coordinates for all
-        // time series and minimal cost
-        // l = max mean length
-
+        // Start Traceback:
+        // Start entry is the entry where all time series reached their max coordinate
+        // and where the cost is minimum for all possible l and s
         double cost = Double.POSITIVE_INFINITY;
         int startS = 0;
         int startL = 1;
-
-     //   int initL = (Math.max(1, this.minDimension) - 1);
         int initL = 0;
 
 
@@ -162,6 +176,226 @@ public class MsmMean {
         return traceback(maxCoordsTS, startL, startS);
     }
 
+
+    /**
+     * set entry for table origin
+     */
+    public void setOriginCoordinates() {
+        // Set cost for origin coordinates
+        int[] originCoordinte = new int[timeseries.length];
+
+        int flattenOriginCoordinate = table.flattenCoordinate(originCoordinte);
+        double[][] firstDimTableOrigin = table.getFirstDim(flattenOriginCoordinate);
+        double[] secondDimTableOrigin = table.getSecondDim(firstDimTableOrigin, 0);
+
+        for (int s = 0; s < this.distinctTsValues.length; s++) {
+
+            double sumMove = 0;
+            for (int i = 0; i < k; i++) {
+                sumMove += Math.abs(timeseries[i][originCoordinte[i]] - this.distinctTsValues[s]);
+            }
+
+            table.set(secondDimTableOrigin, s, sumMove);
+
+        }
+    }
+
+    /**
+     * Fill multidimensional table
+     */
+    public void calculateTableEntry() {
+
+        setOriginCoordinates();
+
+        // iterate through all sums of coordinates
+        for (int i = 1; i <= this.sumLengthTimeseries; i++) {
+
+            ArrayList<int[]> sumICoords = this.sumCoords.get(i);
+            // Iterate through all time series such that the sum of the current coordinates of the time series is i
+            for (int[] currentCoord : sumICoords) {
+
+                int flattenCurrentCoord = table.flattenCoordinate(currentCoord);
+                double[][] firstDimTableCurrentCoord = table.getFirstDim(flattenCurrentCoord);
+
+                // get max index of coordinates to limit the intermediate length of the mean during computation
+                int maxCoord = 0;
+                for (int c : currentCoord) {
+                    if (c > maxCoord) maxCoord = c;
+                }
+
+                ArrayList<int[]> predecessorList = Predecessor.getPredecessors(currentCoord, this.window);
+
+                for (int l = 0; l < Math.min(lLengths, this.loopMultiplier * (maxCoord) + 1); l++) {
+
+                    double[] secondDimTableCurrentCoord = table.getSecondDim(firstDimTableCurrentCoord, l);
+
+                    outer:
+                    for (int s = 0; s < this.distinctTsValues.length; s++) {
+                        // Check if the value is valid to be set (if it did not occur in any of the time series until the current position, it is not set
+                        boolean isValid = false;
+                        for (int q = 0; q < k; q++) {
+                            if (appDist[s][q] <= currentCoord[q]) {
+                                isValid = true;
+                                break;
+                            }
+                        }
+
+                        if (!isValid) {
+                            continue outer;
+                        }
+
+                        // if mean coordinate = 0. All other timeseries are only able to merge, the move
+                        // and split case is not applied.
+                        if (l == 0) {
+                            double cost = costBorderCoords(currentCoord, l, s);
+                            if (cost == Double.POSITIVE_INFINITY) continue outer;
+                            table.set(secondDimTableCurrentCoord, s, cost);
+                            continue outer;
+                        }
+
+                        // regular case: find minimum cost of move/split or merge
+                        // If there exists a merge operation, all other time series are pausing. So we
+                        // have to consider only merge operations OR only split and Move Operations
+                        double cost = Double.POSITIVE_INFINITY;
+
+                        for (int[] predecessor : predecessorList) {
+                            int flattenCoordsPredecessor = table.flattenCoordinate(predecessor);
+                            double[][] firstDimTablePredecessor = table.getFirstDim(flattenCoordsPredecessor);
+                            int[] predecessorMOSP = predecessor.clone();
+                            double costMOSP = calcMOSPCost(currentCoord, l, s, predecessorMOSP, firstDimTablePredecessor);
+                            int[] predecessorME = predecessor.clone();
+                            double costME = calcMECost(currentCoord, l, s, predecessorME, firstDimTablePredecessor);
+
+                            cost = Math.min(Math.min(cost, costME), costMOSP);
+                        }
+
+                        if (cost == Double.POSITIVE_INFINITY) continue outer;
+                        table.set(secondDimTableCurrentCoord, s, cost);
+
+                    }
+
+                }
+            }
+        }
+
+    }
+
+    /**
+     * if the mean coordinate is zero, only merges are possible
+     *
+     * @param currentCoord current coordinates of time series
+     * @param l            current position of mean
+     * @param s            current value position
+     * @return cost
+     */
+    public double costBorderCoords(final int[] currentCoord, final int l, final int s) {
+        int[] predecessor = currentCoord.clone();
+
+        for (int idx = 0; idx < timeseries.length; idx++) {
+            if (currentCoord[idx] != 0) {
+                predecessor[idx]--;
+
+            }
+        }
+        int flattenCoordsPredecessor = table.flattenCoordinate(predecessor);
+        double[][] firstDimTablePredecessor = table.getFirstDim(flattenCoordsPredecessor);
+
+        return calcMECost(currentCoord, l, s, predecessor, firstDimTablePredecessor);
+
+    }
+
+    /**
+     * Compute cost for the case move and split
+     *
+     * @param currentCoord             current coordinates of time series
+     * @param l                        current position of mean
+     * @param s                        current value position
+     * @param coordsPredecessor        coordinates of all possible predecessors
+     * @param firstDimTablePredecessor table entries of all predeceasing entries
+     * @return cost
+     */
+    public double calcMOSPCost(final int[] currentCoord, final int l, final int s, int[] coordsPredecessor, double[][] firstDimTablePredecessor) {
+
+        // for the case move/split the predeceasing entry for mean is decremented
+        int lPred = l - 1;
+
+        // get all entries for current time series and mean positions
+        double[] secondDimTablePredecessor = table.getSecondDim(firstDimTablePredecessor, lPred);
+
+        double cost = Double.POSITIVE_INFINITY;
+
+        final double y = distinctTsValues[s];
+        double sumMove = 0;
+        for (int i = 0; i < currentCoord.length; i++) {
+            // only sum up if in M Index, that is, the position had changed in comparison to the predeceasing entry
+            sumMove += (currentCoord[i] - coordsPredecessor[i]) * Math.abs(timeseries[i][currentCoord[i]] - y);
+        }
+
+        // iterate through all possible distinct values for the predeceasing entry in split case
+        outer:
+        for (int sPred = 0; sPred < distinctTsValues.length; sPred++) {
+
+            final double costPred = table.getThirdDim(secondDimTablePredecessor, sPred);
+            if (costPred < 0) continue;
+
+            double sumSplit = 0;
+            for (int i = 0; i < currentCoord.length; i++) {
+                // only sum up if in split index (the index that does not change)
+                if ((currentCoord[i] - coordsPredecessor[i]) == 0) {
+                    sumSplit += C(y, timeseries[i][currentCoord[i]], distinctTsValues[sPred]);
+                }
+            }
+
+            final double costMOSP = costPred + sumMove + sumSplit;
+
+            //find minimum cost
+            if (costMOSP < cost) {
+                cost = costMOSP;
+            }
+        }
+
+        return cost;
+    }
+
+    /**
+     * Compute cost for the case merge
+     *
+     * @param currentCoord             current coordinates of time series
+     * @param l                        current position of mean
+     * @param s                        current value position
+     * @param coordsPredecessor        coordinates of all possible predecessors
+     * @param firstDimTablePredecessor table entries of all predeceasing entries
+     * @return cost
+     */
+    public double calcMECost(final int[] currentCoord, final int l, final int s, int[] coordsPredecessor, double[][] firstDimTablePredecessor) {
+
+        double[] secondDimTablePredecessor = table.getSecondDim(firstDimTablePredecessor, l);
+        final double costPred = table.getThirdDim(secondDimTablePredecessor, s);
+        if (costPred < 0.0) return Double.POSITIVE_INFINITY;
+
+        double sumMerge = 0;
+
+        final double y = distinctTsValues[s];
+
+        for (int i = 0; i < currentCoord.length; i++) {
+            final int currentCoordI = currentCoord[i];
+            // only add the cost for those entries that changed
+            if ((currentCoordI - coordsPredecessor[i]) == 1) {
+                sumMerge += C(timeseries[i][currentCoordI], timeseries[i][currentCoordI - 1], y);
+            }
+        }
+        return costPred + sumMerge;
+
+    }
+
+
+    /**
+     * traceback through the table to find the corresponding mean with lowest cost
+     * @param startCoordsTraceback start coordinates time series = max coordinates time series
+     * @param startL start coordinate mean
+     * @param startS start value
+     * @return mean with corresponding cost
+     */
     private Pair<double[], Double> traceback(int[] startCoordsTraceback, int startL, int startS) {
 
         double[] meanArray = new double[startL + 1];
@@ -176,11 +410,9 @@ public class MsmMean {
         while (predecessor != null) {
 
             int flattenPredecessorCoord = table.flattenCoordinate(predecessor.coord);
-            CoordLS predecessorTmp = getPredecessorT(predecessor.coord, predecessor.l, predecessor.s,
-                    flattenPredecessorCoord);
+            CoordLS predecessorTmp = getPredecessorT(predecessor.coord, predecessor.l, predecessor.s, flattenPredecessorCoord);
 
-            if (predecessorTmp == null)
-                break;
+            if (predecessorTmp == null) break;
 
             if (predecessor.l != predecessorTmp.l) {
 
@@ -194,8 +426,17 @@ public class MsmMean {
 
     }
 
+    /**
+     * compute predeceasing entry in a computed table - the entry that leads to the minimum cost in the succeeding entry
+     * @param currentCoord current coordinate of time series
+     * @param currentL current coordinate of mean
+     * @param currentS current value position
+     * @param flattenCurrentCoord flattened current coordinates
+     * @return coordinates for: time series, mean and value
+     */
     private CoordLS getPredecessorT(int[] currentCoord, int currentL, int currentS, int flattenCurrentCoord) {
 
+        // border case: only merge
         if (currentL == 0) {
             boolean isOrigin = true;
             for (int c = 0; c < currentCoord.length; c++) {
@@ -204,8 +445,7 @@ public class MsmMean {
                     break;
                 }
             }
-            if (isOrigin)
-                return null;
+            if (isOrigin) return null;
 
             int[] predecessor = currentCoord.clone();
 
@@ -218,41 +458,44 @@ public class MsmMean {
 
             int flattenPredecessorCoord = table.flattenCoordinate(predecessor);
 
-            int[] predecessorME = tracebackME(currentCoord, currentL, currentS, predecessor, flattenPredecessorCoord,
-                    flattenCurrentCoord);
-            if (predecessorME != null)
-                return new CoordLS(predecessorME, currentL, currentS);
+            int[] predecessorME = tracebackME(currentCoord, currentL, currentS, predecessor, flattenPredecessorCoord, flattenCurrentCoord);
+            if (predecessorME != null) return new CoordLS(predecessorME, currentL, currentS);
         }
 
-        // normal case:
-        ArrayList<int[]> predecessorList = Predecessor.getPredecessors(currentCoord, this.diag);
+        // regular case case:
+        ArrayList<int[]> predecessorList = Predecessor.getPredecessors(currentCoord, this.window);
 
         for (int[] predecessor : predecessorList) {
             int flattenPredecessorCoord = table.flattenCoordinate(predecessor);
             int[] predecessorM = predecessor.clone();
-            CoordLS predecessorMOSP = tracebackMOSP(currentCoord, currentL, currentS, predecessorM,
-                    flattenPredecessorCoord, flattenCurrentCoord);
-            if (predecessorMOSP != null)
-                return predecessorMOSP;
-            int[] predecessorME = tracebackME(currentCoord, currentL, currentS, predecessor, flattenPredecessorCoord,
-                    flattenCurrentCoord);
-            if (predecessorME != null)
-                return new CoordLS(predecessorME, currentL, currentS);
+            CoordLS predecessorMOSP = tracebackMOSP(currentCoord, currentL, currentS, predecessorM, flattenPredecessorCoord, flattenCurrentCoord);
+            if (predecessorMOSP != null) return predecessorMOSP;
+            int[] predecessorME = tracebackME(currentCoord, currentL, currentS, predecessor, flattenPredecessorCoord, flattenCurrentCoord);
+            if (predecessorME != null) return new CoordLS(predecessorME, currentL, currentS);
 
         }
 
         return null;
     }
 
-    private CoordLS tracebackMOSP(final int[] currentCoord, int currentL, int currentS, int[] coordsPredecessor,
-            int flattenPredecessorCoord, int flattenCurrentCoord) {
+    /**
+     * traceback for move and split case
+     * @param currentCoord current coordinate of time series
+     * @param currentL current coordinate of mean
+     * @param currentS current value position
+     * @param coordsPredecessor predeceasing coordinates
+     * @param flattenPredecessorCoord flattened predeceasing coordinates
+     * @param flattenCurrentCoord flattened current coordinates
+     * @return coordinates for: time series, mean and value
+     */
+    private CoordLS tracebackMOSP(final int[] currentCoord, int currentL, int currentS, int[] coordsPredecessor, int flattenPredecessorCoord, int flattenCurrentCoord) {
 
         int predecessorL = currentL - 1;
 
         final double y = distinctTsValues[currentS];
         double sumMove = 0;
         for (int i = 0; i < currentCoord.length; i++) {
-            // only sum up if in M Index
+            // only sum up if in M Index, that is, the position had changed in comparison to the predeceasing entry
             sumMove += (currentCoord[i] - coordsPredecessor[i]) * Math.abs(timeseries[i][currentCoord[i]] - y);
         }
 
@@ -261,12 +504,11 @@ public class MsmMean {
         for (int s = 0; s < distinctTsValues.length; s++) {
 
             final double costPred = table.get(flattenPredecessorCoord, predecessorL, s);
-            if (costPred < 0)
-                continue;
+            if (costPred < 0) continue;
 
             double sumSplit = 0;
             for (int i = 0; i < currentCoord.length; i++) {
-                // only sum up if in split index (the index that doesnt change)
+                // only sum up if in split index (the index that does not change)
                 if ((currentCoord[i] - coordsPredecessor[i]) == 0) {
                     sumSplit += C(y, timeseries[i][currentCoord[i]], distinctTsValues[s]);
                 }
@@ -278,20 +520,26 @@ public class MsmMean {
                 return new CoordLS(coordsPredecessor, predecessorL, s);
             }
         }
-
         return null;
 
     }
-
-    private int[] tracebackME(final int[] currentCoord, int currentL, int currentS, int[] coordsPredecessor,
-            int flattenPredecessorCoord, int flattenCurrentCoord) {
+    /**
+     * traceback for merge case
+     * @param currentCoord current coordinate of time series
+     * @param currentL current coordinate of mean
+     * @param currentS current value position
+     * @param coordsPredecessor predeceasing coordinates
+     * @param flattenPredecessorCoord flattened predeceasing coordinates
+     * @param flattenCurrentCoord flattened current coordinates
+     * @return coordinates for: time series, mean and value
+     */
+    private int[] tracebackME(final int[] currentCoord, int currentL, int currentS, int[] coordsPredecessor, int flattenPredecessorCoord, int flattenCurrentCoord) {
 
         double currentCost = table.get(flattenCurrentCoord, currentL, currentS);
 
         // evtl falsch
         final double costPred = table.get(flattenPredecessorCoord, currentL, currentS);
-        if (costPred < 0.0)
-            return null;
+        if (costPred < 0.0) return null;
 
         double sumMerge = 0;
 
@@ -314,190 +562,13 @@ public class MsmMean {
 
     }
 
-    public void setOriginCoordinates() {
-        // Set cost for origin coordinates
-        int[] originCoordinte = new int[timeseries.length];
-
-        int flattenOriginCoordinate = table.flattenCoordinate(originCoordinte);
-        double[][] firstDimTableOrigin = table.getFirstDim(flattenOriginCoordinate);
-        double[] secondDimTableOrigin = table.getSecondDim(firstDimTableOrigin, 0);
-
-        for (int s = 0; s < this.distinctTsValues.length; s++) {
-
-            double sumMove = 0;
-            for (int i = 0; i < k; i++) {
-                sumMove += Math.abs(timeseries[i][originCoordinte[i]] - this.distinctTsValues[s]);
-            }
-
-            table.set(secondDimTableOrigin, s, sumMove);
-
-        }
-    }
-
-    public void calculateTableEntry() {
-
-        setOriginCoordinates();
-
-        // iterate through all sums of coordinates
-        for (int i = 1; i <= this.sumLengthTimeseries; i++) {
-
-            ArrayList<int[]> sumICoords = this.sumCoords.get(i);
-            for (int[] currentCoord : sumICoords) {
-
-                int flattenCurrentCoord = table.flattenCoordinate(currentCoord);
-                double[][] firstDimTableCurrentCoord = table.getFirstDim(flattenCurrentCoord);
-
-                // get min index of coordinate
-                int minCoord = Integer.MAX_VALUE;
-                int maxCoord = 0;
-                for (int c : currentCoord) {
-                    if (c < minCoord)
-                        minCoord = c;
-                    if (c > maxCoord)
-                        maxCoord = c;
-                }
-
-                ArrayList<int[]> predecessorList = Predecessor.getPredecessors(currentCoord, this.diag);
-
-                for (int l = 0; l < Math.min(lLengths,
-                        this.loopMultiplier * (maxCoord) + 1); l++) {
-
-                    double[] secondDimTableCurrentCoord = table.getSecondDim(firstDimTableCurrentCoord, l);
-
-                    outer: for (int s = 0; s < this.distinctTsValues.length; s++) {
-                        boolean isValid = false;
-                        for (int q = 0; q < k; q++) {
-                            if (appDist[s][q] <= currentCoord[q]) {
-                                isValid = true;
-                                break;
-                            }
-                        }
-
-                        if (!isValid) {
-                            continue outer;
-                        }
-
-                        // mean coordinate = 0. All other timeseries are only able to merge, the move
-                        // and split case is not applied.
-                        if (l == 0) {
-                            double cost = costBorderCoords(currentCoord, l, s);
-                            if (cost == Double.POSITIVE_INFINITY)
-                                continue outer;
-                            table.set(secondDimTableCurrentCoord, s, cost);
-                            continue outer;
-                        }
-
-                        // normal case:
-
-                        double cost = Double.POSITIVE_INFINITY;
-
-                        for (int[] predecessor : predecessorList) {
-                            int flattenCoordsPredecessor = table.flattenCoordinate(predecessor);
-                            double[][] firstDimTablePredecessor = table.getFirstDim(flattenCoordsPredecessor);
-                            int[] predecessorMOSP = predecessor.clone();
-                            double costMOSP = calcMOSPCost(currentCoord, l, s, predecessorMOSP,
-                                    firstDimTablePredecessor);
-                            int[] predecessorME = predecessor.clone();
-                            double costME = calcMECost(currentCoord, l, s, predecessorME, flattenCoordsPredecessor,
-                                    firstDimTablePredecessor);
-
-                            cost = Math.min(Math.min(cost, costME), costMOSP);
-                        }
-
-                        if (cost == Double.POSITIVE_INFINITY)
-                            continue outer;
-                        table.set(secondDimTableCurrentCoord, s, cost);
-
-                    }
-
-                }
-            }
-        }
-
-    }
-
-    public double costBorderCoords(final int[] currentCoord, final int l, final int s) {
-        int[] predecessor = currentCoord.clone();
-
-        for (int idx = 0; idx < timeseries.length; idx++) {
-            if (currentCoord[idx] != 0) {
-                predecessor[idx]--;
-
-            }
-        }
-        int flattenCoordsPredecessor = table.flattenCoordinate(predecessor);
-        double[][] firstDimTablePredecessor = table.getFirstDim(flattenCoordsPredecessor);
-
-        return calcMECost(currentCoord, l, s, predecessor, flattenCoordsPredecessor, firstDimTablePredecessor);
-
-    }
-
-    public double calcMOSPCost(final int[] currentCoord, final int l, final int s, int[] coordsPredecessor,
-            double[][] firstDimTablePredecessor) {
-        // If there exists a Merge operation, all other time series are pausing. So we
-        // have to consider only Merge operations OR only Split and Move Operations
-
-        // create coords for predeceasing table entry.
-        // Case Move and Split
-
-        int lPred = l - 1;
-        double[] secondDimTablePredecessor = table.getSecondDim(firstDimTablePredecessor, lPred);
-
-        double cost = Double.POSITIVE_INFINITY;
-
-        final double y = distinctTsValues[s];
-        double sumMove = 0;
-        for (int i = 0; i < currentCoord.length; i++) {
-            // only sum up if in M Index
-            sumMove += (currentCoord[i] - coordsPredecessor[i]) * Math.abs(timeseries[i][currentCoord[i]] - y);
-        }
-
-        outer: for (int sPred = 0; sPred < distinctTsValues.length; sPred++) {
-
-            final double costPred = table.getThirdDim(secondDimTablePredecessor, sPred);
-            if (costPred < 0)
-                continue;
-
-            double sumSplit = 0;
-            for (int i = 0; i < currentCoord.length; i++) {
-                // only sum up if in split index (the index that doesnt change)
-                if ((currentCoord[i] - coordsPredecessor[i]) == 0) {
-                    sumSplit += C(y, timeseries[i][currentCoord[i]], distinctTsValues[sPred]);
-                }
-            }
-
-            final double costMOSP = costPred + sumMove + sumSplit;
-
-            if (costMOSP < cost) {
-                cost = costMOSP;
-            }
-        }
-
-        return cost;
-    }
-
-    public double calcMECost(final int[] currentCoord, final int l, final int s, int[] coordsPredecessor,
-            int flattenCoordsPredecessor, double[][] firstDimTablePredecessor) {
-
-        double[] seconDimTablePredecessor = table.getSecondDim(firstDimTablePredecessor, l);
-        final double costPred = table.getThirdDim(seconDimTablePredecessor, s);
-        if (costPred < 0.0)
-            return Double.POSITIVE_INFINITY;
-
-        double sumMerge = 0;
-
-        final double y = distinctTsValues[s];
-
-        for (int i = 0; i < currentCoord.length; i++) {
-            final int currentCoordI = currentCoord[i];
-            if ((currentCoordI - coordsPredecessor[i]) == 1) {
-                sumMerge += C(timeseries[i][currentCoordI], timeseries[i][currentCoordI - 1], y);
-            }
-        }
-        return costPred + sumMerge;
-
-    }
-
+    /**
+     * cost for merge and split
+     * @param new_point
+     * @param x
+     * @param y
+     * @return cost
+     */
     public double C(double new_point, double x, double y) {
 
         // c - cost of Split/Merge operation. Change this value to what is more
@@ -510,7 +581,13 @@ public class MsmMean {
         return this.c;
     }
 
-    // Function to get the successing coordinate of a current coordinate
+
+    /**
+     * get the succeeding coordinate of the current coordinates
+     *
+     * @param currentCoord current coordinates of the time series
+     * @return succeeding coordinates
+     */
     public int[] getNextTSCoordinate(int[] currentCoord) {
         int[] next = currentCoord.clone();
 
@@ -519,8 +596,9 @@ public class MsmMean {
         int i = 0;
 
         while (carry) {
-            if (i >= currentCoord.length)
-                return null;
+            // no increase possible, reached end of each time series
+            if (i >= currentCoord.length) return null;
+            // Increase the next posible coordinate of a time series and return new coordinates
             if (currentCoord[i] + 1 <= this.maxCoordsTS[i]) {
                 next[i] = next[i] + 1;
                 return next;
@@ -534,6 +612,12 @@ public class MsmMean {
 
     }
 
+    /**
+     * Sum up the current coordinates
+     *
+     * @param currentCoord current coordinates of the time series
+     * @return sum
+     */
     private int addCoordinates(int[] currentCoord) {
         int sum = 0;
         for (int i : currentCoord) {
@@ -544,7 +628,7 @@ public class MsmMean {
 
     public static void main(String[] args) {
 
-      int n = 10;
+        int n = 10;
 
         double[][] exp1 = new double[3][n];
 
@@ -565,8 +649,6 @@ public class MsmMean {
         System.out.println("Mean");
         System.out.println(Arrays.toString(mean.getFirst()));
         System.out.println(mean.getSecond());
-
-        
 
 
     }

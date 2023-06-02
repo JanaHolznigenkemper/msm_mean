@@ -2,14 +2,22 @@ import java.util.*;
 
 public class Predecessor {
 
-    // Compute list of predecessors of a currentCoordinate
-    public static ArrayList<int[]> getPredecessors(int[] currentCoordinate, int diag) {
 
+    /**
+     * Compute list of predecessors of a currentCoordinate
+     *
+     * @param currentCoordinate current coordinates of time series
+     * @param window window size
+     * @return list of predecessor coordinates
+     */
+    public static ArrayList<int[]> getPredecessors(int[] currentCoordinate, int window) {
+
+        // init list with just some random capacity
         ArrayList<int[]> listPredecessors = new ArrayList<>(7);
 
         // Start from 1, because an empty M Index set is not allowed
-
-        outer: for (int i = 1; i < (1 << currentCoordinate.length); i++) {
+        outer:
+        for (int i = 1; i < (1 << currentCoordinate.length); i++) {
             int m = 1;
 
             int[] coordsPredecessor = currentCoordinate.clone();
@@ -27,7 +35,8 @@ public class Predecessor {
                 m = m << 1;
             }
 
-            if (diag >= 0) {
+            // discard as predecessor if coordinates do not fit into window size
+            if (window >= 0) {
                 int minCoord = Integer.MAX_VALUE;
                 int maxCoord = 0;
                 for (int c : coordsPredecessor) {
@@ -36,7 +45,7 @@ public class Predecessor {
                     if (c > maxCoord)
                         maxCoord = c;
                 }
-                if (maxCoord - minCoord > diag) {
+                if (maxCoord - minCoord > window) {
                     continue outer;
                 }
             }

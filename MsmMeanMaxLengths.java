@@ -12,7 +12,7 @@ public class MsmMeanMaxLengths extends MsmMean {
 
     public MsmMeanMaxLengths(double[][] timeseries, double c, int diag) {
         this(timeseries, c);
-        this.diag = diag;
+        this.window = diag;
     }
 
     public void calculateTableEntry() {
@@ -38,7 +38,7 @@ public class MsmMeanMaxLengths extends MsmMean {
                         maxCoord = c;
                 }
 
-                ArrayList<int[]> predecessorList = Predecessor.getPredecessors(currentCoord, this.diag);
+                ArrayList<int[]> predecessorList = Predecessor.getPredecessors(currentCoord, this.window);
 
                 for (int l = Math.max(minCoord - 1, 0); l < lLengths + 1; l++) {
 
@@ -78,7 +78,7 @@ public class MsmMeanMaxLengths extends MsmMean {
                             double costMOSP = calcMOSPCost(currentCoord, l, s, predecessorMOSP,
                                     firstDimTablePredecessor);
                             int[] predecessorME = predecessor.clone();
-                            double costME = calcMECost(currentCoord, l, s, predecessorME, flattenCoordsPredecessor,
+                            double costME = calcMECost(currentCoord, l, s, predecessorME,
                                     firstDimTablePredecessor);
 
                             cost = Math.min(Math.min(cost, costME), costMOSP);

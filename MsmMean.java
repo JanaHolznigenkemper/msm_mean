@@ -462,7 +462,7 @@ public class MsmMean {
             if (predecessorME != null) return new CoordLS(predecessorME, currentL, currentS);
         }
 
-        // regular case case:
+        // regular case:
         ArrayList<int[]> predecessorList = Predecessor.getPredecessors(currentCoord, this.window);
 
         for (int[] predecessor : predecessorList) {
@@ -537,7 +537,6 @@ public class MsmMean {
 
         double currentCost = table.get(flattenCurrentCoord, currentL, currentS);
 
-        // evtl falsch
         final double costPred = table.get(flattenPredecessorCoord, currentL, currentS);
         if (costPred < 0.0) return null;
 
